@@ -499,7 +499,8 @@ cdef class RigidTransform2D(Transform):
         theta[:3] = 0
 
     cdef void _param_to_matrix(self, double[:] theta, double[:, :] R) nogil:
-        r""" Matrix associated with the 2D rigid transform
+        r""" MatriR[1,0], R[1,1], R[1,2] = (sc*cb+cc*sa*sb)*sx, cc*ca*sy, (sc*sb-cc*sa*cb)*sz
+x associated with the 2D rigid transform
 
         Parameters
         ----------
@@ -689,27 +690,30 @@ cdef class RigidIsoscalingTransform3D(Transform):
             double cb = cos(theta[1])
             double sc = sin(theta[2])
             double cc = cos(theta[2])
+            double ss = theta[6]
             double px = x[0], py = x[1], z = x[2]
 
-        J[0, 0] = (-sc * ca * sb) * px + (sc * sa) * py + (sc * ca * cb) * z
-        J[1, 0] = (cc * ca * sb) * px + (-cc * sa) * py + (-cc * ca * cb) * z
-        J[2, 0] = (sa * sb) * px + ca * py + (-sa * cb) * z
+        J[0, 0] = ((-sc * ca * sb) * px + (sc * sa) * py + (sc * ca * cb) * z) * ss
+        J[1, 0] = ((cc * ca * sb) * px + (-cc * sa) * py + (-cc * ca * cb) * z) * ss
+        J[2, 0] = ((sa * sb) * px + ca * py + (-sa * cb) * z) * ss
 
-        J[0, 1] = (-cc * sb - sc * sa * cb) * px + (cc * cb - sc * sa * sb) * z
-        J[1, 1] = (-sc * sb + cc * sa * cb) * px + (sc * cb + cc * sa * sb) * z
-        J[2, 1] = (-ca * cb) * px + (-ca * sb) * z
+        J[0, 1] = ((-cc * sb - sc * sa * cb) * px + (cc * cb - sc * sa * sb) * z) * ss
+        J[1, 1] = ((-sc * sb + cc * sa * cb) * px + (sc * cb + cc * sa * sb) * z) * ss
+        J[2, 1] = ((-ca * cb) * px + (-ca * sb) * z)  * ss
 
-        J[0, 2] = (-sc * cb - cc * sa * sb) * px + (-cc * ca) * py + \
-                  (-sc * sb + cc * sa * cb) * z
-        J[1, 2] = (cc * cb - sc * sa * sb) * px + (-sc * ca) * py + \
-                  (cc * sb + sc * sa * cb) * z
+        J[0, 2] = ((-sc * cb - cc * sa * sb) * px + (-cc * ca) * py + \
+                  (-sc * sb + cc * sa * cb) * z) * ss
+        J[1, 2] = ((cc * cb - sc * sa * sb) * px + (-sc * ca) * py + \
+                  (cc * sb + sc * sa * cb) * z) * ss
         J[2, 2] = 0
 
         J[0, 3:6] = 0
         J[1, 3:6] = 0
         J[2, 3:6] = 0
         J[0, 3], J[1, 4], J[2, 5] = 1, 1, 1
-        J[0, 6], J[1, 6], J[2, 6] = x[0], x[1], x[2]
+        J[0, 6] = (-sa * sb * sc + cb * cc) * px + (-sc * ca) * py + (sa * sc * cb + sb * cc) * z
+        J[1, 6] = (sa * sb * cc + sc * cb ) * px + (ca * cc) * py + (-sa * cb * cc + sb * sc) * z
+        J[2, 6] = (-sb * ca) * px + sa * py + (ca * cb) * z
         # This Jacobian depends on x (it's not constant): return 0
         return 0
 
@@ -818,27 +822,38 @@ cdef class RigidScalingTransform3D(Transform):
             double cb = cos(theta[1])
             double sc = sin(theta[2])
             double cc = cos(theta[2])
+            double sx = theta[6]
+            double sy = theta[7]
+            double sz = theta[8]
             double px = x[0], py = x[1], z = x[2]
 
-        J[0, 0] = (-sc * ca * sb) * px + (sc * sa) * py + (sc * ca * cb) * z
-        J[1, 0] = (cc * ca * sb) * px + (-cc * sa) * py + (-cc * ca * cb) * z
-        J[2, 0] = (sa * sb) * px + ca * py + (-sa * cb) * z
+        J[0, 0] = (-sc * ca * sb * sx) * px + (sc * sa * sy) * py + (sc * ca * cb  * sz) * z
+        J[1, 0] = (cc * ca * sb * sx) * px + (-cc * sa * sy) * py + (-cc * ca * cb * sz) * z
+        J[2, 0] = (sa * sb * sx) * px + ca * sy * py + (-sa * cb * sz) * z
 
-        J[0, 1] = (-cc * sb - sc * sa * cb) * px + (cc * cb - sc * sa * sb) * z
-        J[1, 1] = (-sc * sb + cc * sa * cb) * px + (sc * cb + cc * sa * sb) * z
-        J[2, 1] = (-ca * cb) * px + (-ca * sb) * z
+        J[0, 1] = (-cc * sb - sc * sa * cb) * sx * px + (cc * cb - sc * sa * sb) * sz * z
+        J[1, 1] = (-sc * sb + cc * sa * cb) * sx * px + (sc * cb + cc * sa * sb) * sz * z
+        J[2, 1] = (-ca * cb) * sx * px + (-ca * sb) * sz * z
 
-        J[0, 2] = (-sc * cb - cc * sa * sb) * px + (-cc * ca) * py + \
-                  (-sc * sb + cc * sa * cb) * z
-        J[1, 2] = (cc * cb - sc * sa * sb) * px + (-sc * ca) * py + \
-                  (cc * sb + sc * sa * cb) * z
+        J[0, 2] = (-sc * cb - cc * sa * sb) * sx * px + (-cc * ca) * sy * py + \
+                  (-sc * sb + cc * sa * cb) * sz * z
+        J[1, 2] = (cc * cb - sc * sa * sb) * sx * px + (-sc * ca) * sy * py + \
+                  (cc * sb + sc * sa * cb) * sz * z
         J[2, 2] = 0
 
         J[0, 3:6] = 0
         J[1, 3:6] = 0
         J[2, 3:6] = 0
         J[0, 3], J[1, 4], J[2, 5] = 1, 1, 1
-        J[0, 6], J[1, 6], J[2, 6] = x[0], x[1], x[2]
+        J[0, 6] = (-sa * sb * sc + cb * cc) * px
+        J[1, 6] = (sa * sb * cc + sc * cb) * px
+        J[2, 6] = (-sb * ca) * px
+        J[0, 7] = (-sc * ca) * py
+        J[1, 7] = (ca * cc) * py
+        J[2, 7] = sa * py
+        J[0, 8] = (sa * sc * cb + sb * cc) * z
+        J[1, 8] = (-sa * cb *cc + sb * sc) * z
+        J[2, 8] = ca * cb * z
         # This Jacobian depends on x (it's not constant): return 0
         return 0
 
