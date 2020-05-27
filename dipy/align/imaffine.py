@@ -933,11 +933,15 @@ class AffineRegistration(object):
         n = transform.get_number_of_parameters()
         self.nparams = n
 
+
         static_masked, moving_masked = static, moving
+        self.static_mask, self.moving_mask = None, None
         if not static_mask is None:
-            static_masked = static*static_mask
+            self.static_mask = (static_mask>0).astype(np.int32)
+            static_masked = static*self.static_mask
         if not moving_mask is None:
-            moving_masked = moving*moving_mask
+            self.moving_mask = (moving_mask>0).astype(np.int32)
+            moving_masked = moving*self.moving_mask
 
         if params0 is None:
             params0 = self.transform.get_identity_parameters()
@@ -1093,7 +1097,8 @@ class AffineRegistration(object):
             current_static = current_affine_map.transform(smooth_static)
             current_static_mask = None
             if not static_mask is None:
-                current_static_mask = current_affine_map.transform(static_mask) > 0
+                current_static_mask = current_affine_map.transform(
+                    self.static_mask).astype(np.int32)
 
             # The moving image is full resolution
             current_moving_grid2world = original_moving_grid2world
@@ -1103,7 +1108,7 @@ class AffineRegistration(object):
             self.metric.setup(transform, current_static, current_moving,
                               current_static_grid2world,
                               current_moving_grid2world, self.starting_affine,
-                              current_static_mask, moving_mask)
+                              current_static_mask, self.moving_mask)
 
             # Optimize this level
             if self.options is None:
