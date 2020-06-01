@@ -622,8 +622,10 @@ class MutualInformationMetric(object):
             static_values = self.static
             moving_values = self.affine_map.transform(self.moving)
 
-            if self.moving_mask:
-                moving_mask_values = self.affine_map.transform(self.moving_mask)
+            if not self.moving_mask is None:
+                moving_mask_values = self.affine_map.transform(
+                    self.moving_mask,
+                    'nearest').astype(np.int32)
             self.histogram.update_pdfs_dense(
                 static_values, moving_values,
                 self.static_mask, moving_mask_values)
