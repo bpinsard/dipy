@@ -939,11 +939,11 @@ class AffineRegistration(object):
         static_masked, moving_masked = static, moving
         self.static_mask, self.moving_mask = None, None
         if not static_mask is None:
-            self.static_mask = (static_mask>0).astype(np.int32)
-            static_masked = static*self.static_mask
+            self.static_mask = (static_mask>0.5).astype(np.int32)
+            static_masked = static * self.static_mask
         if not moving_mask is None:
-            self.moving_mask = (moving_mask>0).astype(np.int32)
-            moving_masked = moving*self.moving_mask
+            self.moving_mask = (moving_mask>0.5).astype(np.int32)
+            moving_masked = moving * self.moving_mask
 
         if params0 is None:
             params0 = self.transform.get_identity_parameters()
