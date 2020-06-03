@@ -498,7 +498,8 @@ class MutualInformationMetric(object):
         self.metric_grad = None
 
     def setup(self, transform, static, moving, static_grid2world=None,
-              moving_grid2world=None, starting_affine=None):
+              moving_grid2world=None, starting_affine=None,
+              static_mask=None, moving_mask=None):
         r"""Prepare the metric to compute intensity densities and gradients.
 
         The histograms will be setup to compute probability densities of
@@ -541,6 +542,8 @@ class MutualInformationMetric(object):
         self.transform = transform
         self.static = np.array(static).astype(np.float64)
         self.moving = np.array(moving).astype(np.float64)
+        self.static_mask = static_mask
+        self.moving_mask = moving_mask
         self.static_grid2world = static_grid2world
         self.static_world2grid = npl.inv(static_grid2world)
         self.moving_grid2world = moving_grid2world
@@ -584,7 +587,7 @@ class MutualInformationMetric(object):
             static_p = static_p[..., :self.dim]
             self.static_vals, inside = self.interp_method(static, static_p)
             self.static_vals = np.array(self.static_vals, dtype=np.float64)
-        self.histogram.setup(self.static, self.moving)
+        self.histogram.setup(self.static, self.moving, self.static_mask, self.moving_mask)
 
     def _update_histogram(self):
         r"""Update the histogram according to the current affine transform.
@@ -614,10 +617,18 @@ class MutualInformationMetric(object):
             results in an image of the same shape as the static image.
 
         """
+        static_mask_values, moving_mask_values = None, None
         if self.sampling_proportion is None:  # Dense case
             static_values = self.static
             moving_values = self.affine_map.transform(self.moving)
-            self.histogram.update_pdfs_dense(static_values, moving_values)
+
+            if not self.moving_mask is None:
+                moving_mask_values = self.affine_map.transform(
+                    self.moving_mask,
+                    'nearest').astype(np.int32)
+            self.histogram.update_pdfs_dense(
+                static_values, moving_values,
+                self.static_mask, moving_mask_values)
         else:  # Sparse case
             sp_to_moving = self.moving_world2grid.dot(self.affine_map.affine)
             pts = sp_to_moving.dot(self.samples.T).T  # Points on moving grid
@@ -627,7 +638,7 @@ class MutualInformationMetric(object):
             static_values = self.static_vals
             moving_values = self.moving_vals
             self.histogram.update_pdfs_sparse(static_values, moving_values)
-        return static_values, moving_values
+        return static_values, moving_values, static_mask_values, moving_mask_values
 
     def _update_mutual_information(self, params, update_gradient=True):
         r"""Update marginal and joint distributions and the joint gradient.
@@ -661,7 +672,7 @@ class MutualInformationMetric(object):
         self.affine_map.set_affine(current_affine)
 
         # Update the histogram with the current joint intensities
-        static_values, moving_values = self._update_histogram()
+        static_values, moving_values, static_mask_values, moving_mask_values = self._update_histogram()
 
         H = self.histogram  # Shortcut to `self.histogram`
         grad = None  # Buffer to write the MI gradient into (if needed)
@@ -685,7 +696,9 @@ class MutualInformationMetric(object):
                     static_values,
                     moving_values,
                     static2prealigned,
-                    mgrad)
+                    mgrad,
+                    static_mask_values,
+                    moving_mask_values)
             else:  # Sparse case
                 # Compute the gradient of moving at the sampling points
                 # which are already given in physical space coordinates
@@ -880,7 +893,8 @@ class AffineRegistration(object):
 
     def _init_optimizer(self, static, moving, transform, params0,
                         static_grid2world, moving_grid2world,
-                        starting_affine):
+                        starting_affine,
+                        static_mask, moving_mask):
         r"""Initialize the registration optimizer.
 
         Initializes the optimizer by computing the scale space of the input
@@ -921,6 +935,16 @@ class AffineRegistration(object):
         n = transform.get_number_of_parameters()
         self.nparams = n
 
+
+        static_masked, moving_masked = static, moving
+        self.static_mask, self.moving_mask = None, None
+        if not static_mask is None:
+            self.static_mask = (static_mask>0.5).astype(np.int32)
+            static_masked = static * self.static_mask
+        if not moving_mask is None:
+            self.moving_mask = (moving_mask>0.5).astype(np.int32)
+            moving_masked = moving * self.moving_mask
+
         if params0 is None:
             params0 = self.transform.get_identity_parameters()
         self.params0 = params0
@@ -928,9 +952,9 @@ class AffineRegistration(object):
             self.starting_affine = np.eye(self.dim + 1)
         elif isinstance(starting_affine, str):
             if starting_affine == 'mass':
-                affine_map = transform_centers_of_mass(static,
+                affine_map = transform_centers_of_mass(static_masked,
                                                        static_grid2world,
-                                                       moving,
+                                                       moving_masked,
                                                        moving_grid2world)
                 self.starting_affine = affine_map.affine
             elif starting_affine == 'voxel-origin':
@@ -956,10 +980,10 @@ class AffineRegistration(object):
         moving_direction, moving_spacing = \
             get_direction_and_spacings(moving_grid2world, self.dim)
 
-        static = ((static.astype(np.float64) - static.min()) /
-                  (static.max() - static.min()))
-        moving = ((moving.astype(np.float64) - moving.min()) /
-                  (moving.max() - moving.min()))
+        static = ((static.astype(np.float64) - static_masked.min()) /
+                  (static_masked.max() - static_masked.min()))
+        moving = ((moving.astype(np.float64) - moving_masked.min()) /
+                  (moving_masked.max() - moving_masked.min()))
 
         # Build the scale space of the input images
         if self.use_isotropic:
@@ -972,6 +996,7 @@ class AffineRegistration(object):
                                                  self.sigmas,
                                                  static_grid2world,
                                                  static_spacing, False)
+
         else:
             self.moving_ss = ScaleSpace(moving, self.levels, moving_grid2world,
                                         moving_spacing, self.ss_sigma_factor,
@@ -983,7 +1008,8 @@ class AffineRegistration(object):
 
     def optimize(self, static, moving, transform, params0,
                  static_grid2world=None, moving_grid2world=None,
-                 starting_affine=None, ret_metric=False):
+                 starting_affine=None, ret_metric=False,
+                 static_mask=None, moving_mask=None):
         r""" Start the optimization process.
 
         Parameters
@@ -1040,7 +1066,8 @@ class AffineRegistration(object):
         """
         self._init_optimizer(static, moving, transform, params0,
                              static_grid2world, moving_grid2world,
-                             starting_affine)
+                             starting_affine,
+                             static_mask, moving_mask)
         del starting_affine  # Now we must refer to self.starting_affine
 
         # Multi-resolution iterations
@@ -1070,6 +1097,10 @@ class AffineRegistration(object):
                                            original_static_shape,
                                            original_static_grid2world)
             current_static = current_affine_map.transform(smooth_static)
+            current_static_mask = None
+            if not static_mask is None:
+                current_static_mask = current_affine_map.transform(
+                    self.static_mask).astype(np.int32)
 
             # The moving image is full resolution
             current_moving_grid2world = original_moving_grid2world
@@ -1078,7 +1109,8 @@ class AffineRegistration(object):
             # Prepare the metric for iterations at this resolution
             self.metric.setup(transform, current_static, current_moving,
                               current_static_grid2world,
-                              current_moving_grid2world, self.starting_affine)
+                              current_moving_grid2world, self.starting_affine,
+                              current_static_mask, self.moving_mask)
 
             # Optimize this level
             if self.options is None:
